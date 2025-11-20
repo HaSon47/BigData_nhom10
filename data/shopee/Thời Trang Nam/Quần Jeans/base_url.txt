@@ -1,0 +1,4 @@
+{
+  "category": "Thời Trang Nam/Quần Jeans",
+  "url": "https://shopee.vn/Qu%E1%BA%A7n-Jeans-cat.11035567.11035583"
+}

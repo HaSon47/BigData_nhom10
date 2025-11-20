@@ -1,0 +1,4 @@
+{
+  "category": "Điện Thoại & Phụ Kiện/Sim",
+  "url": "https://shopee.vn/Sim-cat.11036030.11036084"
+}

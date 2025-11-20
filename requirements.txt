@@ -1,0 +1,5 @@
+undetected-chromedriver==3.1.7
+selenium==4.7.2
+beautifulsoup4==4.11.1
+pyspark==3.3.1
+kafka-python==2.0.2

@@ -1,0 +1,4 @@
+{
+  "category": "Thiết Bị Điện Tử/Loa",
+  "url": "https://shopee.vn/Loa-cat.11036132.11036135"
+}

@@ -1,0 +1,4 @@
+{
+  "category": "Thiết Bị Điện Tử/Linh phụ kiện",
+  "url": "https://shopee.vn/Linh-ph%E1%BB%A5-ki%E1%BB%87n-cat.11036132.11036133"
+}
