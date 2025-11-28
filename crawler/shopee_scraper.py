@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import time
+import random
 
 from bs4 import BeautifulSoup
 from selenium.common import TimeoutException, StaleElementReferenceException, NoSuchElementException
@@ -11,6 +12,10 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 from crawler.common_scraper import CommonScraper
 
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -22,6 +27,10 @@ class ShopeeScraper(CommonScraper):
         main_page = "https://shopee.vn/"
         super().__init__(num_page_to_scrape, data_dir, wait_timeout, retry_num, restart_num, is_headless, main_page,
                          'shopee_info', 'shopee_url', 'shopee_scraper', consumer_id)
+
+    def human_sleep(self, a=1.0, b=2.5):
+        """Tạo delay ngẫu nhiên giống người thật"""
+        time.sleep(random.uniform(a, b))
 
     def get_product_urls(self):
         for cat_1 in os.listdir(self.data_dir):
@@ -37,73 +46,90 @@ class ShopeeScraper(CommonScraper):
                 output_dir = os.path.join(self.data_dir, category)
                 if not os.path.exists(output_dir):
                     os.mkdir(output_dir)
-                logger.info(f"Opening category page: {category_url}")
-                self.driver.get(category_url)
 
-                # iterate through each page and scrape products link
+                logger.info(f"Opening category page: {category_url}")
+                self.human_sleep(2, 4)  # delay trước khi mở trang
+
+                self.driver.get(category_url)
+                self.human_sleep(2, 3)  # đợi trang load sơ bộ
+
                 counter = 1
                 prev_url = ''
+
                 while True:
                     logger.info("Scraping urls from page " + str(counter))
+
                     if prev_url == self.driver.current_url:
-                        logger.info(
-                            'This page is identical to the previous page, which means last page is reached')
+                        logger.info('Page identical to previous; reached last page')
                         break
                     prev_url = self.driver.current_url
+
                     for retry in range(self.retry_num):
                         try:
                             self.driver.execute_script("window.scrollTo(0,0)")
-                            WebDriverWait(self.driver, self.wait_timeout).until(
-                                ec.visibility_of_element_located((By.CLASS_NAME, "shopee-search-item-result__item")))
-                            for i in range(12):
-                                self.driver.execute_script(
-                                    "window.scrollBy(0,350)")
-                                time.sleep(0.05)
+                            self.human_sleep(0.6, 1.2)
 
-                            soup = BeautifulSoup(
-                                self.driver.page_source, features="lxml")
-                            product_list = soup.find_all(
-                                class_='shopee-search-item-result__item')
+                            WebDriverWait(self.driver, self.wait_timeout).until(
+                                ec.visibility_of_element_located((By.CLASS_NAME, "shopee-search-item-result__item"))
+                            )
+
+                            # Cuộn xuống từ từ giống người dùng
+                            for i in range(12):
+                                self.driver.execute_script("window.scrollBy(0,350)")
+                                time.sleep(random.uniform(0.1, 0.25))
+
+                            self.human_sleep(1.0, 2.0)  # đợi DOM tải xong
+
+                            soup = BeautifulSoup(self.driver.page_source, features="lxml")
+                            product_list = soup.find_all(class_='shopee-search-item-result__item')
+
                             product_list_with_url = soup \
                                 .find(class_='row shopee-search-item-result__items') \
                                 .find_all('a', href=True)
+
                             num_product = len(product_list)
                             num_product_with_url = len(product_list_with_url)
+
                             logger.info(f'Found {num_product} products')
-                            logger.info(
-                                f'Found {num_product_with_url} products with url')
+                            logger.info(f'Found {num_product_with_url} products with url')
 
                             if len(product_list_with_url) == len(product_list):
-                                logger.info(
-                                    'All products\' urls are loaded, extracting product url')
+                                logger.info('All product URLs loaded. Extracting...')
                                 self._get_product_urls(product_list, category)
                                 break
+
                             elif retry == self.retry_num - 1:
-                                logger.info(f'Only {num_product_with_url}/{num_product} product url are found '
-                                            f'after retrying {self.retry_num} times')
+                                logger.info(
+                                    f'Only {num_product_with_url}/{num_product} product URLs '
+                                    f'after {self.retry_num} retries')
                             else:
                                 logger.info(
-                                    f'{num_product_with_url}/{num_product} product url are found, retrying')
+                                    f'{num_product_with_url}/{num_product} URLs found, retrying...')
+                                self.human_sleep(1.5, 2.5)
 
                         except TimeoutException:
-                            logger.info(
-                                f'Products not visible after waiting for {self.wait_timeout}, retrying')
+                            logger.info(f'Products not visible after {self.wait_timeout}s, retrying')
+                            self.human_sleep(1, 2)
 
                     if counter == self.num_page_to_scrape:
-                        logger.info(
-                            f'Reached maximum number of pages to scrape in category: {category}')
+                        logger.info(f'Reached max pages for category {category}')
                         break
-                    counter += 1
 
+                    counter += 1
                     logger.info('Going to the next page')
+
+                    self.human_sleep(1.5, 3.0)  # đợi trước khi click
+
                     next_page_button = self.driver.find_element(
-                        by=By.CLASS_NAME, value="shopee-icon-button--right")
+                        by=By.CLASS_NAME, value="shopee-icon-button--right"
+                    )
                     next_page_button.click()
 
+                    self.human_sleep(2.5, 4.0)  # đợi trang sau load
     def _get_product_urls(self, product_list, category):
         for product in product_list:
             product_url = 'https://shopee.vn' + product.a['href']
-            self.write_to_file(product_url, os.path.join(category, 'url.txt'))
+            #self.write_to_file(product_url, os.path.join(category, 'url.txt'))
             # d = {
             #     'category': category,
             #     'url': product_url

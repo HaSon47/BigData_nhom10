@@ -66,30 +66,17 @@ class CommonScraper(ABC):
     def start_driver(self):
         #Khởi tạo driver bằng undetected_chromedriver
         options = uc.ChromeOptions()
-        options.set_capability("pageLoadStrategy", "none")
+        options.set_capability("pageLoadStrategy", "eager")
         if self.is_headless:
-            options.headless = True
-
-        if not os.path.exists("./profile"):
-            os.mkdir("./profile")
-
-        # driver = uc.Chrome(options=options, user_data_dir="./profile")
-        driver = uc.Chrome(options=options)
+            options.add_argument("--headless=new")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("--disable-gpu")
+        
+        driver = uc.Chrome(options=options,version_main=142)
         driver.set_script_timeout(10)
         driver.set_page_load_timeout(20)
         driver.maximize_window()
        
-        #Khởi tạo driver bằng selenium
-        # options = Options()
-        # options.add_argument('--no-sandbox')
-        # options.add_argument("--window-position=0,0")
-        # options.add_argument('--no-verify')
-        # service = Service(
-        #     executable_path='/home/vaipe/anhtn/anhtn_test/dexscreener-reaction/utils/chromedriver')
-        # driver = webdriver.Chrome(service=service, options=options)
-        # driver.execute_cdp_cmd('Network.setUserAgentOverride', {
-        #     "userAgent": "python 2.7", "platform": "Windows"})
-        # agent = driver.execute_script("return navigator.userAgent")
         return driver
 
     def write_to_file(self, text, file_name):
