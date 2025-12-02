@@ -34,6 +34,8 @@ class ShopeeScraper(CommonScraper):
 
     def get_product_urls(self):
         for cat_1 in os.listdir(self.data_dir):
+            if cat_1 not in ['Thời Trang Nam', 'Thời Trang Nữ']:
+                continue
             full_cat_1 = os.path.join(self.data_dir, cat_1)
             for cat_2 in os.listdir(full_cat_1):
                 full_cat_2 = os.path.join(full_cat_1, cat_2)
@@ -126,10 +128,12 @@ class ShopeeScraper(CommonScraper):
                     next_page_button.click()
 
                     self.human_sleep(2.5, 4.0)  # đợi trang sau load
+        self.driver.close()
+                    
     def _get_product_urls(self, product_list, category):
         for product in product_list:
             product_url = 'https://shopee.vn' + product.a['href']
-            #self.write_to_file(product_url, os.path.join(category, 'url.txt'))
+            self.write_to_file(product_url, os.path.join(category, 'url.txt'))
             # d = {
             #     'category': category,
             #     'url': product_url
