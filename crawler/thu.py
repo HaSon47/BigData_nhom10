@@ -9,7 +9,7 @@ from selenium.common import TimeoutException, StaleElementReferenceException, No
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as ec
 from selenium.webdriver.support.ui import WebDriverWait
-
+from selenium.webdriver.common.action_chains import ActionChains
 from crawler.common_scraper import CommonScraper
 
 logging.basicConfig(
@@ -139,7 +139,7 @@ class ShopeeScraper(CommonScraper):
             #     'url': product_url
             # }
             # self.send_to_kafka(d, 'url')
-    def get_product_info_draf(self):
+    def get_product_info(self):
 
         # Load danh sách URL
         url_file = r'C:\Users\Lenovo\Desktop\20251\BigData\code\BigData_nhom10\data\shopee\Thời Trang Nữ\Áo\url.txt'
@@ -228,105 +228,151 @@ class ShopeeScraper(CommonScraper):
 
 
           
-    def get_product_info(self):
-        logger.info(f"Consuming from {self.url_topic}")
-        terminate_count = 0
-        while True:
-            logger.info("Polling for messages")
-            result = self.url_consumer.poll(timeout_ms=1000, max_records=1)
-            if result:
-                terminate_count = 0
-                logger.info("Message found")
-                records = list(result.values())[0]
-                for record in records:
-                    logger.info(f"Record: {record.value}")
-                    d = json.loads(record.value)
-                    category = d['category']
-                    url = d['url']
-                    logger.info('Scraping category: ' + category)
-
-                    url = url.strip()
-                    breakpoint()
-                    self.driver.get(url)
-
+    def get_product_info_draf(self):
+        """Scrape Shopee product info với anti-detection nâng cao"""
+        url_file = r'C:\Users\Lenovo\Desktop\20251\BigData\code\BigData_nhom10\data\shopee\Thời Trang Nữ\Áo\url.txt'
+        
+        with open(url_file, 'r', encoding='utf-8') as f:
+            urls = [line.strip() for line in f]
+        
+        for idx, url in enumerate(urls):
+            try:
+                # ========== CHỐNG BOT NÂNG CAO ==========
+                
+                # 1. Delay ngẫu nhiên giữa các sản phẩm (tăng range)
+                if idx > 0:
+                    self.human_sleep(5, 12)
+                
+                # 2. Mô phỏng di chuột ngẫu nhiên trước khi load trang
+                self._simulate_mouse_movement()
+                
+                # 3. Random scroll trên trang hiện tại
+                try:
+                    for _ in range(random.randint(1, 3)):
+                        scroll_amount = random.randint(100, 500)
+                        self.driver.execute_script(f"window.scrollBy(0, {scroll_amount});")
+                        self.human_sleep(0.3, 0.8)
+                except:
+                    pass
+                
+                # 4. Load URL với random User-Agent rotation (nếu có setup)
+                self.driver.get(url)
+                logger.info(f"\n[{idx+1}/{len(urls)}] Opening: {url}")
+                
+                # 5. Delay sau khi load trang (giả lập đọc nội dung)
+                self.human_sleep(3, 6)
+                
+                # 6. Scroll từ từ như người thật đang xem sản phẩm
+                self._natural_scroll_behavior()
+                
+                # 7. Random hover vào các element (mô phỏng di chuột xem ảnh)
+                self._random_hover_actions()
+                
+                # ========== LẤY PRODUCT TYPE ==========
+                variation_xpath = "//button[contains(@class,'product-variation')]"
+                try:
+                    WebDriverWait(self.driver, self.wait_timeout).until(
+                        ec.presence_of_element_located((By.XPATH, variation_xpath))
+                    )
+                except TimeoutException:
+                    logger.info("No variation found – skipping")
+                    # Delay trước khi chuyển sản phẩm
+                    self.human_sleep(2, 4)
+                    continue
+                
+                logger.info("Product types found — collecting variations...")
+                
+                # Delay nhẹ trước khi tương tác với variations
+                self.human_sleep(1, 2)
+                
+                # Lấy toàn bộ nhóm variation
+                group_xpath = (
+                    "//div[contains(@class,'product-variation')]/ancestor::div"
+                    "[contains(@class,'flex') and contains(@class,'items-center')]"
+                )
+                try:
+                    variation_groups = self.driver.find_elements(By.XPATH, group_xpath)
+                except:
+                    logger.info("Variation structure changed — skipping")
+                    continue
+                
+                type_arr = []
+                for idx_group, group in enumerate(variation_groups):
                     try:
-                        # get all product types
-                        type_arr = []
-                        WebDriverWait(self.driver, self.wait_timeout).until(
-                            ec.visibility_of_element_located((By.CLASS_NAME, 'flex.rY0UiC.j9be9C')))
-                        type_ele = self.driver.find_element(
-                            By.CLASS_NAME, 'flex.rY0UiC.j9be9C')
-                        logger.info(
-                            'Product types found, iterating through each type...')
-                        for retry in range(self.retry_num):
-                            try:
-                                # grab all product type button into an array
-                                for counter, attr in enumerate(
-                                        type_ele.find_elements(By.XPATH,
-                                                               './div/div[@class=\'flex items-center\']')):
-                                    buttons = attr.find_elements(By.XPATH,
-                                                                 './div/button[@class=\'product-variation\']')
-                                    if len(buttons) == 0:
-                                        logger.info(
-                                            f'Attribute number {counter} has no clickable buttons, skipping this attribute')
-                                        continue
-                                    type_arr.append(buttons)
-                                logger.info(
-                                    f'{len(type_arr)} types found, iterating through all of them')
-                                self._iterate_all_product_type(
-                                    0, type_arr, url=url)
-                                break
+                        buttons = group.find_elements(
+                            By.XPATH, ".//button[contains(@class,'product-variation')]"
+                        )
+                        if len(buttons) == 0:
+                            continue
+                        logger.info(f" Variation group {idx_group+1}: {len(buttons)} options")
+                        type_arr.append(buttons)
+                    except StaleElementReferenceException:
+                        logger.info("Stale element — retrying group...")
+                        continue
+                
+                if not type_arr:
+                    logger.info("No clickable variation found — skip product")
+                    self.human_sleep(1, 3)
+                    continue
+                
+                # ========== COMBINATIONS ==========
+                logger.info(f"Total variation groups: {len(type_arr)} — iterating...")
+                try:
+                    self._iterate_all_product_type(0, type_arr, url=url)
+                except Exception as e:
+                    logger.info(f"Error when iterating product types: {e}")
+                    continue
+                    
+            except Exception as e:
+                logger.error(f"Error processing URL {url}: {e}")
+                self.human_sleep(3, 6)
+                continue
 
-                            except StaleElementReferenceException:
-                                logger.info(
-                                    'Cannot get product types, retrying')
-
-                            if retry == self.retry_num - 1:
-                                logger.info(
-                                    f'Cannot get product types after {self.retry_num} attempts')
-                                self._get_product_info_helper(url)
-                    except TimeoutException:
-                        logger.info('Product has no type, scraping directly')
-                        self._get_product_info_helper(url)
-
-                    except Exception as e:
-                        logger.error(e)
-
-            else:
-                logger.info('No message found in buffer')
-                terminate_count += 1
-                if terminate_count == 900:
-                    break
-
-    # def _iterate_all_product_type(self, type_index, type_arr, **kwargs):
-    #     if type_index == len(type_arr):
-    #         self._get_product_info_helper(kwargs['url'])
-    #         return
-
-    #     for element in type_arr[type_index]:
-    #         element.click()
-    #         self._iterate_all_product_type(
-    #             type_index + 1, type_arr, url=kwargs['url'])
-    
     def _iterate_all_product_type(self, type_index, type_arr, **kwargs):
+        """Iterate qua các variations với human-like behavior"""
         if type_index == len(type_arr):
             self._get_product_info_helper(kwargs['url'])
             return
-
-        for btn in type_arr[type_index]:
+        
+        for btn_idx, btn in enumerate(type_arr[type_index]):
             try:
-                self.driver.execute_script("arguments[0].scrollIntoView(true);", btn)
-                self.human_sleep(0.4, 0.9)
+                # Scroll đến button một cách tự nhiên
+                self.driver.execute_script(
+                    "arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", 
+                    btn
+                )
+                
+                # Delay ngẫu nhiên trước khi click
+                self.human_sleep(0.6, 1.5)
+                
+                # Hover trước khi click (mô phỏng người thật)
+                try:
+                    actions = ActionChains(self.driver)
+                    actions.move_to_element(btn).pause(random.uniform(0.2, 0.5)).perform()
+                except:
+                    pass
+                
+                # Click với delay nhỏ
+                self.human_sleep(0.2, 0.5)
                 btn.click()
-            except Exception:
+                
+                # Delay sau click để page update
+                self.human_sleep(0.8, 1.5)
+                
+            except Exception as e:
+                logger.debug(f"Cannot click variation button: {e}")
                 continue
-
+            
             self._iterate_all_product_type(type_index + 1, type_arr, url=kwargs['url'])
 
     def _get_product_info_helper(self, curr_url):
+        """Extract product info với natural delays"""
         result = {"url": curr_url}
-
+        
         try:
+            # Delay nhẹ trước khi extract (giả lập đọc thông tin)
+            self.human_sleep(1, 2)
+            
             # ===== GET PRODUCT NAME =====
             title_xpath = "//h1[contains(@class,'attM6y')] | //h1"
             title = WebDriverWait(self.driver, self.wait_timeout).until(
@@ -334,17 +380,16 @@ class ShopeeScraper(CommonScraper):
             )
             result['name'] = title.text
             logger.info("Product name extracted")
-
+            
             # ===== PRICE =====
             price_xpath = "//div[contains(@class,'pmmxKx') or contains(@class,'Ybrg+') or contains(@class,'_2Shl1Z')]"
             price_ele = self.driver.find_element(By.XPATH, price_xpath)
             result['price'] = price_ele.text
             logger.info("Price extracted")
-
+            
             # ===== RATINGS / REVIEWS / SOLD =====
             info_xpath = "//div[contains(@class,'flex') and contains(., 'đánh giá') or contains(., 'Đã bán')]"
             infos = self.driver.find_elements(By.XPATH, info_xpath)
-
             if len(infos) > 0:
                 text = infos[0].text.split('\n')
                 for t in text:
@@ -354,107 +399,69 @@ class ShopeeScraper(CommonScraper):
                         result["sold"] = t
                     elif "trên" in t or "sao" in t:
                         result["rating"] = t
-
             logger.info("Rating / reviews / sold extracted")
-
+            
             # ===== SHIPPING =====
             ship_xpath = "//div[contains(text(),'Vận chuyển')]/following-sibling::div"
             ship_ele = self.driver.find_elements(By.XPATH, ship_xpath)
             result["shipping"] = ship_ele[0].text if ship_ele else None
-
             logger.info("Shipping info extracted")
-
+            
+            # Delay sau khi extract xong (mô phỏng đọc xong)
+            self.human_sleep(0.5, 1.2)
+            
         except Exception as e:
             logger.error(f"Error extracting product info: {e}")
-
         finally:
             print("\nRESULT:", result)
             return result
 
-    # def _get_product_info_helper(self, curr_url):
-    #     try:
-    #         result = {}
+    # ========== CÁC HÀM HỖ TRỢ CHỐNG BOT ==========
 
-    #         WebDriverWait(self.driver, self.wait_timeout).until(
-    #             ec.visibility_of_element_located((By.CLASS_NAME, "_44qnta")))
-    #         product_name = self.driver.find_element(
-    #             By.CLASS_NAME, '_44qnta').text
-    #         logger.info('Product name extracted')
+    def _simulate_mouse_movement(self):
+        """Mô phỏng di chuyển chuột ngẫu nhiên"""
+        try:
+            actions = ActionChains(self.driver)
+            for _ in range(random.randint(2, 4)):
+                x_offset = random.randint(-200, 200)
+                y_offset = random.randint(-200, 200)
+                actions.move_by_offset(x_offset, y_offset).perform()
+                time.sleep(random.uniform(0.1, 0.3))
+        except Exception as e:
+            logger.debug(f"Mouse movement simulation failed: {e}")
 
-    #         price = self.driver.find_element(By.CLASS_NAME, 'pqTWkA').text
-    #         logger.info('Price extracted')
+    def _natural_scroll_behavior(self):
+        """Scroll tự nhiên như người thật xem sản phẩm"""
+        try:
+            viewport_height = self.driver.execute_script("return window.innerHeight")
+            total_scroll = 0
+            max_scroll = random.randint(800, 1500)
+            
+            while total_scroll < max_scroll:
+                scroll_step = random.randint(150, 400)
+                self.driver.execute_script(f"window.scrollBy(0, {scroll_step});")
+                total_scroll += scroll_step
+                
+                # Delay ngẫu nhiên giữa các lần scroll
+                self.human_sleep(0.5, 1.5)
+                
+                # Đôi khi scroll lên một chút (mô phỏng người xem lại)
+                if random.random() < 0.3:
+                    back_scroll = random.randint(50, 150)
+                    self.driver.execute_script(f"window.scrollBy(0, -{back_scroll});")
+                    self.human_sleep(0.3, 0.8)
+        except Exception as e:
+            logger.debug(f"Natural scroll failed: {e}")
 
-    #         # this element contains average ratings, number of reviews, number sold
-    #         avg_rating = None
-    #         num_review = None
-    #         num_sold = None
-    #         some_info = self.driver.find_element(
-    #             By.CLASS_NAME, 'flex.X5u-5c').text.split('\n')
-    #         if len(some_info) == 6:  # has all info
-    #             avg_rating = some_info[0]
-    #             logger.info('Average rating extracted')
-    #             num_review = some_info[1]
-    #             logger.info('Number of ratings extracted')
-    #             num_sold = some_info[3]
-    #             logger.info('Number of product sold extracted')
-    #         elif len(some_info) == 4:  # has no review
-    #             logger.info('Product has no review')
-    #             num_sold = some_info[3]
-    #             logger.info('Number of product sold extracted')
-    #         else:
-    #             logger.info('Cannot parse review and number sold info')
-
-    #         shipping = None
-    #         try:
-    #             shipping = self.driver.find_element(
-    #                 By.CLASS_NAME, 'WZTmVh').text.split('\n')[-1]
-    #             logger.info('Shipping info extracted')
-    #         except NoSuchElementException:
-    #             logger.info('No shipping info found')
-
-    #         attrs = {}
-    #         type_ele = self.driver.find_element(
-    #             By.CLASS_NAME, 'flex.rY0UiC.j9be9C')
-    #         for ele in type_ele.find_elements(By.XPATH, './div/div[@class=\'flex items-center\']'):
-    #             attr_name = ele.find_element(By.CLASS_NAME, 'oN9nMU').text
-    #             try:
-    #                 attr_value = ele.find_element(
-    #                     By.CLASS_NAME, 'product-variation.product-variation--selected')
-    #                 attr_value = attr_value.text
-    #             except NoSuchElementException:
-    #                 logger.info(
-    #                     f"Attribute of \"{attr_name}\" is not found, setting as null")
-    #                 attr_value = None
-    #             attrs[attr_name] = attr_value
-
-    #         product_desc = self.driver.find_element(By.CLASS_NAME, 'product-detail.page-product__detail').get_attribute(
-    #             'innerHTML')
-    #         logger.info('Product description extracted')
-
-    #         shop_info = None
-    #         try:
-    #             shop_info = self.driver.find_element(
-    #                 By.CLASS_NAME, 'NLeTwo.page-product__shop').text
-    #             logger.info('Shop info extracted')
-    #         except NoSuchElementException:
-    #             logger.info('Shop info not found')
-
-    #         result['product_name'] = product_name
-    #         result['shipping'] = shipping
-    #         result['shop_info'] = shop_info
-    #         result['price'] = price
-    #         result['product_desc'] = product_desc
-    #         result['avg_rating'] = avg_rating
-    #         result['num_review'] = num_review
-    #         result['num_sold'] = num_sold
-    #         result['attrs'] = attrs
-    #         result['url'] = curr_url
-
-    #         category_path = os.path.join(self.data_dir, 'Thời Trang Nữ', 'Áo')
-    #         with open(os.path.join(category_path, 'product.ndjson'), 'a', encoding='utf-8') as f:
-    #             json.dump(result, f, ensure_ascii=False)
-    #             f.write('\n')
-
-    #         # self.send_to_kafka(result, 'info')
-    #     except (NoSuchElementException, TimeoutException) as e:
-    #         logger.error(e)
+    def _random_hover_actions(self):
+        """Hover ngẫu nhiên vào các element (mô phỏng xem ảnh sản phẩm)"""
+        try:
+            # Hover vào ảnh sản phẩm
+            images = self.driver.find_elements(By.TAG_NAME, "img")[:5]
+            if images and random.random() < 0.7:
+                target_img = random.choice(images)
+                actions = ActionChains(self.driver)
+                actions.move_to_element(target_img).pause(random.uniform(0.5, 1.5)).perform()
+                self.human_sleep(0.3, 0.8)
+        except Exception as e:
+            logger.debug(f"Random hover failed: {e}")
