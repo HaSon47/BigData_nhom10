@@ -1,0 +1,51 @@
+version: '3.7'
+services:
+  zookeeper:
+    image: wurstmeister/zookeeper:latest
+    ports:
+      - "2181:2181"
+    volumes: 
+      - zk_data:/opt/zookeeper-3.4.13/data
+    
+    restart: unless-stopped
+
+  kafka1:
+    image: wurstmeister/kafka:latest
+    ports:
+      - "9094:9094"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9094
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9094
+      KAFKA_LOG_DIRS: /kafka/kafka-logs-kafka1
+      KAFKA_CREATE_TOPICS: "hachi"
+
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true' # Cho phép tự động tạo topic
+      KAFKA_NUM_PARTITIONS: 1                # Số lượng partition mặc định cho topic tự tạo
+      KAFKA_DEFAULT_REPLICATION_FACTOR: 1    # Số bản sao mặc định
+    volumes:
+     # - /var/run/docker.sock:/var/run/docker.sock
+      - kafka1_data:/kafka
+      
+    restart: unless-stopped
+  # kafka2:
+  #   image: wurstmeister/kafka:latest
+  #   ports:
+  #     - "9093:9093"
+  #   environment:
+  #     KAFKA_BROKER_ID: 2
+  #     KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+  #     KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9093
+  #     KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9093
+  #     KAFKA_LOG_DIRS: /kafka/kafka-logs-kafka2
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #     - kafka2_data:/kafka
+
+volumes:
+  zk_data:
+  kafka1_data:
+    # kafka2_data:
+
+
