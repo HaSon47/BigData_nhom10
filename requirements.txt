@@ -3,3 +3,6 @@ selenium==4.7.2
 beautifulsoup4==4.11.1
 pyspark==3.3.1
 kafka-python==2.0.2
+ndjson==0.3.1
+confluent-kafka==2.2.0
+elasticsearch==8.6.2
