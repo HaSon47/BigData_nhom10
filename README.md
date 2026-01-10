@@ -17,16 +17,19 @@ Repo này chứa các thành phần cho **Stream Layer** (đã sẵn sàng) và 
 1. Cài đặt các thư viện Python cần thiết:
    - `python -m pip install -r requirements.txt`
 
-2. Chạy Docker Compose để dựng các thành phần (Kafka, Elasticsearch, Kibana, ...):
-   - Di chuyển vào thư mục chứa docker-compose (ví dụ `docker/elk_single-node_docker`) và chạy:
+2. Chạy Docker Compose để dựng các thành phần (Kafka, Elasticsearch, Kibana,...):
+   - Di chuyển vào thư mục chứa docker-compose (ví dụ `docker/elk_1node_docker`) và chạy:
      ```bash
-     cd docker/elk_single-node_docker
+     cd docker/elk_1node_docker
      docker compose up -d
      ```
    - Kiểm tra Elasticsearch:
      ```bash
      curl -u elastic:123123 http://localhost:9200/_cluster/health?pretty
      ```
+- Cần chạy 2 file yml trong:
+    - elk_1node_docker: dựng elasticsearch, kibana
+    - kafka_docker: dựng kafka
 
 3. Giả lập dữ liệu real-time tới Kafka:
    - Chạy producer stream:
