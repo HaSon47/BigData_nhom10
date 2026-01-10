@@ -2,3 +2,6 @@
 __init__.pyc
 __pycache__
 profile
+*.log
+.env
+*.ndjson

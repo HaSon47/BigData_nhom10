@@ -59,5 +59,6 @@ def consume_messages(kafka_topics):
 # Main function to start consuming messages
 if __name__ == "__main__":
     print("Starting Kafka consumer...")
-    kafka_topics = ["shopee_info", "lazada_info"]  # List of Kafka topics
+    #kafka_topics = ["shopee_info", "lazada_info"]  # List of Kafka topics
+    kafka_topics = ["shopee_info"]
     consume_messages(kafka_topics)

@@ -79,17 +79,26 @@ def write_data_to_elasticsearch(df, index_name="final_hachi"):
         if not es.indices.exists(index=index_name):
             return 0
         
-        response = es.search(index=index_name, body={
-            "size": 1,
-            "sort": [{"id": {"order": "desc"}}],
-            "_source": ["id"]
-        })
+        try:
+            response = es.search(index=index_name, body={
+                "size": 1,
+                "sort": [{
+                    "id": {
+                        "order": "desc",
+                        "unmapped_type": "long"  # <--- CRITICAL FIX
+                    }
+                }],
+                "_source": ["id"]
+            })
 
-        if response['hits']['hits']:
-            max_id = response['hits']['hits'][0]['_source']['id']
-        else:
-            max_id = 0
-        return max_id
+            if response['hits']['hits']:
+                max_id = response['hits']['hits'][0]['_source']['id']
+            else:
+                max_id = 0
+            return max_id
+        except Exception as e:
+            print(f"Warning: Could not retrieve max_id, defaulting to 0. Error: {e}")
+            return 0
 
     max_id = get_max_id(index_name)
 
