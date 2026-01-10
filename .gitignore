@@ -4,4 +4,4 @@ __pycache__
 profile
 *.log
 .env
-*.ndjson
+combined.ndjson
