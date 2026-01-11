@@ -7,8 +7,7 @@ from selenium.webdriver.chrome.options import Options
 import undetected_chromedriver as uc
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-
-# from kafka import KafkaProducer, KafkaConsumer
+from kafka import KafkaProducer, KafkaConsumer
 
 logger = logging.getLogger(__name__)
 BOOTSTRAP_SERVERS = ['viet:9092', 'jazzdung:9093', 'dungbruh:9094']
@@ -29,33 +28,33 @@ class CommonScraper(ABC):
         self.info_topic = info_topic
         self.url_topic = url_topic
         self.driver = self.start_driver()
-        # self.url_producer = KafkaProducer(
-        #     bootstrap_servers=BOOTSTRAP_SERVERS,
-        #     # key_serializer=str.encode,
-        #     value_serializer=lambda v: json.dumps(
-        #         v, ensure_ascii=False).encode('utf-8'),
-        #     batch_size=1000,
-        #     linger_ms=5,
-        #     acks=1,
-        #     request_timeout_ms=1000
-        # )
-        # self.info_producer = KafkaProducer(
-        #     bootstrap_servers=BOOTSTRAP_SERVERS,
-        #     # key_serializer=str.encode,
-        #     value_serializer=lambda v: json.dumps(
-        #         v, ensure_ascii=False).encode('utf-8'),
-        #     batch_size=1000,
-        #     linger_ms=5,
-        #     acks=1,
-        #     request_timeout_ms=1000
-        # )
-        # self.url_consumer = KafkaConsumer(
-        #     bootstrap_servers=BOOTSTRAP_SERVERS,
-        #     value_deserializer=lambda v: v.decode('utf-8'),
-        #     group_id="url_scraper",
-        #     client_id=consumer_id
-        # )
-        # self.url_consumer.subscribe(self.url_topic)
+        self.url_producer = KafkaProducer(
+            bootstrap_servers=BOOTSTRAP_SERVERS,
+            key_serializer=str.encode,
+            value_serializer=lambda v: json.dumps(
+                v, ensure_ascii=False).encode('utf-8'),
+            batch_size=1000,
+            linger_ms=5,
+            acks=1,
+            request_timeout_ms=1000
+        )
+        self.info_producer = KafkaProducer(
+            bootstrap_servers=BOOTSTRAP_SERVERS,
+            # key_serializer=str.encode,
+            value_serializer=lambda v: json.dumps(
+                v, ensure_ascii=False).encode('utf-8'),
+            batch_size=1000,
+            linger_ms=5,
+            acks=1,
+            request_timeout_ms=1000
+        )
+        self.url_consumer = KafkaConsumer(
+            bootstrap_servers=BOOTSTRAP_SERVERS,
+            value_deserializer=lambda v: v.decode('utf-8'),
+            group_id="url_scraper",
+            client_id=consumer_id
+        )
+        self.url_consumer.subscribe(self.url_topic)
 
     def get_main_page(self):
         self.driver.get(self.main_page)
