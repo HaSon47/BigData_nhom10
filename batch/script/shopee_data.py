@@ -1,19 +1,24 @@
-from pyspark.sql.functions import lower, regexp_replace, regexp_extract, col, trim, when, instr, lit, concat_ws, size, split, avg, isnan, when, count, isnull, mean, coalesce
+from pyspark.sql.functions import lower, regexp_replace, regexp_extract, col, trim, when, instr, lit, concat_ws, size, split, avg, isnan, count, isnull, mean, coalesce
 from pyspark.sql.types import StructType, StructField, StringType
 from pyspark.sql import SparkSession
 import argparse
-special_char = '[^a-z0-9A-Z_ ' \
-               'àáãạảăắằẳẵặâấầẩẫậèéẹẻẽêềếểễệđìíĩỉịòóõọỏôốồổỗộơớờởỡợùúũụủưứừửữựỳỵỷỹýÀÁÃẠẢĂẮẰẲẴẶÂẤẦẨẪẬ' \
-               'ÈÉẸẺẼÊỀẾỂỄỆĐÌÍĨỈỊÒÓÕỌỎÔỐỒỔỖỘƠỚỜỞỠỢÙÚŨỤỦƯỨỪỬỮỰỲỴỶỸÝ]+'
+import sys
 
+# --- KHỞI TẠO SPARK ---
 spark = (SparkSession
          .builder
          .appName("full_shopee_data")
          .getOrCreate())
 
+# Thiết lập log level để đỡ rác log trong Airflow
+spark.sparkContext.setLogLevel("WARN")
+
+special_char = '[^a-z0-9A-Z_ ' \
+               'àáãạảăắằẳẵặâấầẩẫậèéẹẻẽêềếểễệđìíĩỉịòóõọỏôốồổỗộơớờởỡợùúũụủưứừửữựỳỵỷỹýÀÁÃẠẢĂẮẰẲẴẶÂẤẦẨẪẬ' \
+               'ÈÉẸẺẼÊỀẾỂỄỆĐÌÍĨỈỊÒÓÕỌỎÔỐỒỔỖỘƠỚỜỞỠỢÙÚŨỤỦƯỨỪỬỮỰỲỴỶỸÝ]+'
+
 
 def load_file(path):
-
     # to convert attrs to String
     schema = StructType([
         StructField("attrs", StringType(), True),
@@ -27,9 +32,8 @@ def load_file(path):
         StructField("shop_info", StringType(), True),
         StructField("url", StringType(), True)
     ])
-    df = spark.read.format("json").schema(schema)\
-        .load(path)
-
+    # Hỗ trợ đọc cả thư mục (khi consumer tạo folder)
+    df = spark.read.format("json").schema(schema).load(path)
     return df
 
 
@@ -42,19 +46,11 @@ def k_to_number(c):  # 3,2k -> 3200
 
 
 def clean_product_name(df):
-    # Lowercase
     product_name = lower(col('product_name'))
-    # Remove like tier
-    product_name = regexp_replace(
-        product_name, 'yêu thích\n|yêu thích\+\n', ' ')
-    # Remove contents inside [], option indicate promotion, prices
+    product_name = regexp_replace(product_name, 'yêu thích\n|yêu thích\+\n', ' ')
     product_name = regexp_replace(product_name, r'\[.*?\]', ' ')
-    # Remove special character
     product_name = regexp_replace(product_name, special_char, ' ')
-    # Remove redundant whitespaces
     product_name = regexp_replace(product_name, ' +', ' ')
-
-    # Trim
     product_name = trim(product_name)
     return df.withColumn('product_name', product_name)
 
@@ -70,13 +66,10 @@ def clean_desc(df):
     product_desc = lower(col('product_desc'))
     product_desc = regexp_replace(product_desc, 'Vớ/ Tất', 'Vớ, Tất')
     product_desc = regexp_replace(product_desc, 'Vớ/Tất', 'Vớ, Tất')
-    product_desc = regexp_replace(
-        product_desc, 'Quần Dài/Quần Âu', 'Quần Dài, Quần Âu')
-    product_desc = regexp_replace(
-        product_desc, 'Quần Dài/ Quần Âu', 'Quần Dài, Quần Âu')
+    product_desc = regexp_replace(product_desc, 'Quần Dài/Quần Âu', 'Quần Dài, Quần Âu')
+    product_desc = regexp_replace(product_desc, 'Quần Dài/ Quần Âu', 'Quần Dài, Quần Âu')
     product_desc = regexp_replace(product_desc, ' &amp;', ',')
-    product_desc = regexp_replace(
-        product_desc, '<svg.*?</svg>|<div>|div|class=|"|<label.*?>|<flex.*?>| href=/', '')
+    product_desc = regexp_replace(product_desc, '<svg.*?</svg>|<div>|div|class=|"|<label.*?>|<flex.*?>| href=/', '')
     product_desc = regexp_replace(product_desc, '</a>', '-')
     product_desc = regexp_replace(product_desc, '</label>', ': ')
     product_desc = regexp_replace(product_desc, '< ', '<')
@@ -85,11 +78,8 @@ def clean_desc(df):
     product_desc = regexp_replace(product_desc, '<p ', '<')
     product_desc = regexp_replace(product_desc, ' +', ' ')
     product_desc = trim(product_desc)
-
-    # Split
     product_desc = regexp_replace(product_desc, '</>', '/')
     product_desc = regexp_replace(product_desc, '<.*?>', '')
-
     return df.withColumn('product_desc', product_desc)
 
 
@@ -97,7 +87,6 @@ def extract_country(df):
     country = regexp_replace(col('product_desc'),  'mô tả sản phẩm(.*)', '')
     country = regexp_extract(country, 'xuất xứ: (.+?)/', 1)
     country = regexp_replace(country, special_char, ' ')
-
     return df.withColumn('country', country)
 
 
@@ -129,25 +118,20 @@ def extract_first_category(df):
 def extract_second_category(df):
     category = regexp_extract('product_desc', 'shopee-(.+)-//', 1)
     cat_list = split(category, r"-")
-
     return df.withColumn('second_category',
-                         when(
-                             size(cat_list) > 1,
-                             concat_ws(' / ', cat_list[0], cat_list[1])
-                         ).otherwise('no info')
+                         when(size(cat_list) > 1,
+                              concat_ws(' / ', cat_list[0], cat_list[1])
+                              ).otherwise('no info')
                          )
 
 
 def extract_third_category(df):
     category = regexp_extract('product_desc', 'shopee-(.+)-//', 1)
     cat_list = split(category, r"-")
-
     return df.withColumn('third_category',
-                         when(
-                             size(cat_list) > 2,
-                             concat_ws(
-                                 ' / ', cat_list[0], cat_list[1], cat_list[2])
-                         ).otherwise('no info')
+                         when(size(cat_list) > 2,
+                              concat_ws(' / ', cat_list[0], cat_list[1], cat_list[2])
+                              ).otherwise('no info')
                          )
 
 
@@ -158,7 +142,6 @@ def extract_description(df):
     description = regexp_replace(description, special_char, ' ')
     description = regexp_replace(description, ' +', ' ')
     description = trim(description)
-
     return df.withColumn('description', description)
 
 
@@ -239,19 +222,17 @@ def clean_numeric_field(df, col_name):
 
 
 def write_file(df, destination):
-
     (df
-        .coalesce(1)
-        .write.option("header", True)
-        .format("csv")
-        .mode('overwrite')
-        .csv(destination))
-
+     .coalesce(1)
+     .write.option("header", True)
+     .format("csv")
+     .mode('overwrite')
+     .csv(destination))
     return df
 
 
 def get_full_data(origin, destination):
-
+    print(f"Reading from: {origin}")
     # Load
     df = load_file(origin)
 
@@ -286,44 +267,8 @@ def get_full_data(origin, destination):
     df = df.withColumn("shop_like_tier", df["shop_like_tier"].cast('string'))
 
     # Write
+    print(f"Writing to: {destination}")
     write_file(df, destination)
-
-    print("Succeed!")
-    return df
-
-
-def stream_shopee_data(df):
-    # Clean
-    df = clean_product_name(df)
-    df = clean_price(df)
-    df = clean_desc(df)
-    df = extract_country(df)
-    df = extract_brand(df)
-    df = extract_stock(df)
-    df = extract_origin(df)
-    df = extract_first_category(df)
-    df = extract_second_category(df)
-    df = extract_third_category(df)
-    df = extract_description(df)
-    df = clean_attrs(df)
-    df = extract_shop_name(df)
-    df = extract_shop_like_tier(df)
-    df = extract_shop_num_review(df)
-    df = extract_shop_reply_percentage(df)
-    df = extract_shop_reply_time(df)
-    df = extract_shop_creation_time(df)
-    df = extract_shop_num_follower(df)
-    df = clean_shipping(df)
-
-    df = clean_numeric_field(df, "num_sold")
-    df = clean_numeric_field(df, "num_review")
-
-    df = df.drop("product_desc")
-    df = df.drop("shop_info")
-
-    df = df.withColumn("shop_like_tier", df["shop_like_tier"].cast('string'))
-
-    # Write
 
     print("Succeed!")
     return df
@@ -331,15 +276,11 @@ def stream_shopee_data(df):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Get full shopee data')
-
-    parser.add_argument('--origin',
-                        type=str,
-                        help='Read location')
-
-    parser.add_argument('--destination',
-                        type=str,
-                        help='Save location')
-
+    parser.add_argument('--origin', type=str, help='Read location')
+    parser.add_argument('--destination', type=str, help='Save location')
     args = parser.parse_args()
 
     get_full_data(args.origin, args.destination)
+    
+    # Dừng Spark Session sạch sẽ
+    spark.stop()

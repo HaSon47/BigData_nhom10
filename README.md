@@ -47,7 +47,7 @@ Repo này chứa các thành phần cho **Stream Layer** (đã sẵn sàng) và 
    - Lệnh `make` sẽ thực thi job Spark (theo cấu hình trong repo) và đẩy kết quả tới Elasticsearch.
 
 5. Mở Kibana để visualize dữ liệu streaming:
-   - Mặc định Kibana được map tới cổng `5061` → truy cập: `http://localhost:5061`
+   - Mặc định Kibana được map tới cổng `5061` → truy cập: `http://localhost:5601`
    - Nếu cần mở port trên firewall (Ubuntu):
      ```bash
      sudo ufw allow 5061/tcp

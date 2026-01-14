@@ -12,7 +12,7 @@ kafka_bootstrap_servers = "localhost:9094"
 kafka_topics = ["shopee_info"]  # List of Kafka topics
 
 # Path to the NDJSON file
-PATH_FILE_NDJSON = '/mnt/disk1/hachi/BigData_nhom10/data/combined.ndjson'
+PATH_FILE_NDJSON = '/home/annez02/BigData_nhom10/data/combined_example.ndjson'
 TIME_INTERVAL = 60
 # Initialize Kafka producer
 producer_conf = {

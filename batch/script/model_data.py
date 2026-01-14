@@ -145,8 +145,13 @@ def get_model_data(shopee_path, lazada_path, destination):
 
     # Load data
     shopee_df = load_shopee(shopee_path)
-    lazada_df = load_lazada(lazada_path)
-    df = shopee_df.unionByName(lazada_df, allowMissingColumns=True)
+    
+    # Lazada is optional - only load if path is provided
+    if lazada_path:
+        lazada_df = load_lazada(lazada_path)
+        df = shopee_df.unionByName(lazada_df, allowMissingColumns=True)
+    else:
+        df = shopee_df
 
     df = fill_with_mean(df)
     df = drop_null_record(df)
@@ -169,7 +174,8 @@ if __name__ == '__main__':
 
     parser.add_argument('--lazada', 
                         type=str,
-                        help='Lazada read location')
+                        default=None,
+                        help='Lazada read location (optional)')
 
     parser.add_argument('--destination', 
                         type=str,
