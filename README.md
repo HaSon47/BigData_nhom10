@@ -77,8 +77,13 @@ Model Training (Spark) → Trained Models
 - **HDFS Consumer** (`batch/script/hdfs_consumer.py`): Đọc từ Kafka → ghi vào HDFS raw
 - **Data Cleaning** (`batch/script/shopee_data.py`, `lazada_data.py`): Clean và transform raw data
 - **Model Data Prep** (`batch/script/model_data.py`): Merge và chuẩn bị data cho training
-- **Visualize Data** (`batch/script/visualize_data.py`): Group và deduplicate cho visualization
+- **Visualize Data** (`batch/script/visualize_data.py`): Group và deduplicate cho visualization (chỉ ghi HDFS, không còn Elasticsearch)
 - **Model Training** (`batch/model/model.py`): Train ML models (Linear Regression, Random Forest, GBT)
+
+**Cấu trúc lưu trữ dữ liệu:**
+- **Raw data**: `/user/hadoop/raw/` (không phân theo ngày)
+- **Clean data** (Airflow DAG): `/user/hadoop/clean/{ddmmyyyy}/` (theo ngày)
+- **Clean data** (Manual): `/user/hadoop/clean/` (trực tiếp)
 
 ---
 
@@ -152,6 +157,12 @@ docker exec namenode hdfs dfs -mkdir -p /user/hadoop/model
 docker exec namenode hdfs dfs -mkdir -p /user/hadoop/vis
 docker exec namenode hdfs dfs -chmod -R 777 /user/hadoop
 ```
+
+**Lưu ý về cấu trúc thư mục theo ngày:**
+- Khi chạy qua **Airflow DAG**, dữ liệu sẽ được lưu tự động vào thư mục theo ngày: `/user/hadoop/clean/{ddmmyyyy}/`
+- Format ngày: `ddmmyyyy` (ví dụ: `14012026` cho ngày 14/01/2026)
+- DAG sẽ tự động tạo thư mục và set permission trước khi chạy tasks
+- Khi chạy **manual**, bạn có thể chọn lưu trực tiếp vào `/user/hadoop/clean/` hoặc tạo thư mục ngày thủ công
 
 ---
 
@@ -244,6 +255,21 @@ airflow dags trigger data_processing_clean
 airflow tasks logs data_processing_clean clean_shopee_data 2026-01-14
 ```
 
+**Cấu trúc dữ liệu khi chạy qua Airflow DAG:**
+
+DAG `data_processing_clean` sẽ tự động:
+1. Tạo thư mục theo ngày: `/user/hadoop/clean/{ddmmyyyy}/` (ví dụ: `/user/hadoop/clean/14012026/`)
+2. Set permission 777 cho thư mục
+3. Lưu các file output vào thư mục ngày:
+   - `shopee_full_data.csv` → `/user/hadoop/clean/{ddmmyyyy}/shopee_full_data.csv`
+   - `visualize_data.csv` → `/user/hadoop/clean/{ddmmyyyy}/visualize_data.csv`
+   - `model_data.csv` → `/user/hadoop/clean/{ddmmyyyy}/model_data.csv`
+
+**Lợi ích:**
+- Tổ chức dữ liệu theo ngày, dễ quản lý và truy vết
+- Tránh ghi đè dữ liệu giữa các ngày
+- Dễ dàng xóa dữ liệu cũ theo ngày nếu cần
+
 ---
 
 ### Bước 4: Kiểm tra kết quả
@@ -254,11 +280,21 @@ airflow tasks logs data_processing_clean clean_shopee_data 2026-01-14
 # List raw data
 docker exec namenode hdfs dfs -ls /user/hadoop/raw/
 
-# List clean data
+# List clean data (nếu chạy manual - không có thư mục ngày)
 docker exec namenode hdfs dfs -ls /user/hadoop/clean/
 
-# Download file để kiểm tra
+# List clean data theo ngày (nếu chạy qua Airflow DAG)
+# Thay {ddmmyyyy} bằng ngày thực tế, ví dụ: 14012026
+docker exec namenode hdfs dfs -ls /user/hadoop/clean/14012026/
+
+# Xem tất cả các thư mục ngày
+docker exec namenode hdfs dfs -ls /user/hadoop/clean/
+
+# Download file để kiểm tra (manual)
 docker exec namenode hdfs dfs -get /user/hadoop/clean/shopee_full_data.csv /tmp/
+
+# Download file từ thư mục ngày (Airflow DAG)
+docker exec namenode hdfs dfs -get /user/hadoop/clean/14012026/shopee_full_data.csv /tmp/
 ```
 
 **Hoặc dùng Web UI:**
