@@ -13,7 +13,7 @@ airflow/airflow.cfg
 airflow/airflow.db
 batch/script/__pycache__/
 crawler/
-dags/
+/dags/
 stream/
 create_airflow_user.py
 HOW_TO_RUN_DAGS.md
