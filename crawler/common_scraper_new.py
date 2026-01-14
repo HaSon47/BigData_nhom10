@@ -7,7 +7,7 @@ import random
 import re
 import time
 from typing import Any, Callable, Dict, Optional, Set
-# from kafka import KafkaProducer, KafkaConsumer
+from kafka import KafkaProducer, KafkaConsumer
 import seleniumwire.undetected_chromedriver as uc
 from selenium_stealth import stealth
 from selenium.common.exceptions import WebDriverException
@@ -41,33 +41,33 @@ class CommonScraper(ABC):
         self._max_proxy_failures_before_rotate = 1
         
         self.driver = self.start_driver()
-        # self.url_producer = KafkaProducer(
-        #     bootstrap_servers=BOOTSTRAP_SERVERS,
-        #     # key_serializer=str.encode,
-        #     value_serializer=lambda v: json.dumps(
-        #         v, ensure_ascii=False).encode('utf-8'),
-        #     batch_size=1000,
-        #     linger_ms=5,
-        #     acks=1,
-        #     request_timeout_ms=1000
-        # )
-        # self.info_producer = KafkaProducer(
-        #     bootstrap_servers=BOOTSTRAP_SERVERS,
-        #     # key_serializer=str.encode,
-        #     value_serializer=lambda v: json.dumps(
-        #         v, ensure_ascii=False).encode('utf-8'),
-        #     batch_size=1000,
-        #     linger_ms=5,
-        #     acks=1,
-        #     request_timeout_ms=1000
-        # )
-        # self.url_consumer = KafkaConsumer(
-        #     bootstrap_servers=BOOTSTRAP_SERVERS,
-        #     value_deserializer=lambda v: v.decode('utf-8'),
-        #     group_id="url_scraper",
-        #     client_id=consumer_id
-        # )
-        # self.url_consumer.subscribe(self.url_topic)
+        self.url_producer = KafkaProducer(
+            bootstrap_servers=BOOTSTRAP_SERVERS,
+            key_serializer=str.encode,
+            value_serializer=lambda v: json.dumps(
+                v, ensure_ascii=False).encode('utf-8'),
+            batch_size=1000,
+            linger_ms=5,
+            acks=1,
+            request_timeout_ms=1000
+        )
+        self.info_producer = KafkaProducer(
+            bootstrap_servers=BOOTSTRAP_SERVERS,
+            key_serializer=str.encode,
+            value_serializer=lambda v: json.dumps(
+                v, ensure_ascii=False).encode('utf-8'),
+            batch_size=1000,
+            linger_ms=5,
+            acks=1,
+            request_timeout_ms=1000
+        )
+        self.url_consumer = KafkaConsumer(
+            bootstrap_servers=BOOTSTRAP_SERVERS,
+            value_deserializer=lambda v: v.decode('utf-8'),
+            group_id="url_scraper",
+            client_id=consumer_id
+        )
+        self.url_consumer.subscribe(self.url_topic)
 
     def get_main_page(self):
         self.driver.get(self.main_page)
@@ -412,19 +412,19 @@ class CommonScraper(ABC):
         self.driver = self.start_driver()
         logger.info('Driver restarted')
     
-    
-
     def send_to_kafka(self, value, mode):
         if mode == 'url':
             self.url_producer.send(
                 topic=self.url_topic,
-                value=value
+                value=value,
+                key=mode
             )
         elif mode == 'info':
             self.info_producer.send(
                 topic=self.info_topic,
-                value=value
+                value=value,
+                key=mode
             )
 
-    # def __del__(self):
-    #     self.driver.quit()
+    def __del__(self):
+        self.driver.quit()

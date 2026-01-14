@@ -42,27 +42,33 @@ def load_shopee(path):
     return df
 
 def load_lazada(path):
-    schema = StructType([
-        StructField("product_name", StringType(), True), 
-        StructField("avg_rating", DoubleType(), True), 
-        StructField("price", IntegerType(), True), 
-        StructField("brand", StringType(), True), 
-        StructField("num_review", IntegerType(), True), 
-        StructField("attrs", StringType(), True), 
-        StructField("category", StringType(), True), 
-        StructField("description", StringType(), True), 
-        StructField("url", StringType(), True), 
-        StructField("first_category", StringType(), True), 
-        StructField("second_category", StringType(), True), 
-        StructField("third_category", StringType(), True), 
-        StructField("shop_name", StringType(), True), 
-        StructField("shop_rating", DoubleType(), True), 
-        StructField("ship_on_time", DoubleType(), True), 
-        StructField("shop_reply_percentage", DoubleType(), True)
-    ])
+    # Lazada output is written with header=True in lazada_data.py
+    df = spark.read.format("csv").option("header", True).load(path)
 
-    df = spark.read.format("csv").schema(schema).load(path)
+    # Ensure expected columns exist + correct types
+    casts = {
+        "product_name": StringType(),
+        "url": StringType(),
+        "avg_rating": DoubleType(),
+        "num_review": IntegerType(),
+        "shop_name": StringType(),
+        "attrs": StringType(),
+        "price": IntegerType(),
+        "first_category": StringType(),
+        "second_category": StringType(),
+        "third_category": StringType(),
+        "num_sold": IntegerType(),
+        "description": StringType(),
+    }
 
+    for col_name, dtype in casts.items():
+        if col_name in df.columns:
+            df = df.withColumn(col_name, col(col_name).cast(dtype))
+        else:
+            df = df.withColumn(col_name, lit(None).cast(dtype))
+
+    # Keep a stable column order
+    df = df.select(*casts.keys())
     return df
 
 

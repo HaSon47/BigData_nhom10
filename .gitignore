@@ -5,3 +5,4 @@ profile
 *.log
 .env
 combined.ndjson
+proxy.txt
