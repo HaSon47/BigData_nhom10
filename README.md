@@ -62,28 +62,53 @@ Repo này chứa các thành phần cho **Stream Layer** (đã sẵn sàng) và 
 Batch Layer xử lý dữ liệu theo các giai đoạn:
 
 ```
-Kafka Topics → HDFS Consumer → Raw Data (HDFS) 
+Kafka Topics (shopee_info)
     ↓
-Data Cleaning (Spark) → Clean Data (HDFS)
+HDFS Consumer (hdfs_consumer.py)
+    → Tạo nhiều file timestamped: shopee_data_{timestamp}.json
+    → Lưu vào /user/hadoop/raw/
+    → Timeout: 180 giây (3 phút) hoặc dừng sau 30s không có message
     ↓
-Model Data Prep (Spark) → Model Data (HDFS)
+Merge Raw Files (trong namenode container)
+    → Merge tất cả shopee_data_*.json → shopee_raw.ndjson
     ↓
-Visualize Data (Spark) → Visualize Data (HDFS)
+Create Clean Folder (theo ngày: {ddmmyyyy})
+    → Tạo /user/hadoop/clean/{ddmmyyyy}/ và set permission 777
     ↓
-Model Training (Spark) → Trained Models
+Data Cleaning (Spark - shopee_data.py)
+    → Đọc shopee_raw.ndjson
+    → Clean và transform
+    → Ghi shopee_full_data.csv vào /user/hadoop/clean/{ddmmyyyy}/
+    ↓
+    ├─→ Visualize Data (Spark - visualize_data.py)
+    │   → Group và deduplicate
+    │   → Ghi visualize_data.csv vào /user/hadoop/clean/{ddmmyyyy}/
+    │
+    └─→ Model Data Prep (Spark - model_data.py)
+        → Merge và chuẩn bị data cho training
+        → Ghi model_data.csv vào /user/hadoop/clean/{ddmmyyyy}/
 ```
 
 **Các thành phần chính:**
-- **HDFS Consumer** (`batch/script/hdfs_consumer.py`): Đọc từ Kafka → ghi vào HDFS raw
-- **Data Cleaning** (`batch/script/shopee_data.py`, `lazada_data.py`): Clean và transform raw data
-- **Model Data Prep** (`batch/script/model_data.py`): Merge và chuẩn bị data cho training
+- **HDFS Consumer** (`batch/script/hdfs_consumer.py`): 
+  - Consume messages từ Kafka topic `shopee_info`
+  - Tạo nhiều file timestamped: `shopee_data_{timestamp}.json` trong `/user/hadoop/raw/`
+  - Tự động dừng sau 180 giây hoặc sau 30 giây không có message mới
+  - Chạy trong Airflow container với user root (cần `kafka-python` và `hdfs` packages)
+- **Merge Raw Files**: Merge tất cả file JSON timestamped thành `shopee_raw.ndjson` (chạy trong namenode container)
+- **Data Cleaning** (`batch/script/shopee_data.py`): Clean và transform raw data từ ndjson → CSV
+- **Model Data Prep** (`batch/script/model_data.py`): Merge và chuẩn bị data cho training (chỉ xử lý Shopee, Lazada optional)
 - **Visualize Data** (`batch/script/visualize_data.py`): Group và deduplicate cho visualization (chỉ ghi HDFS, không còn Elasticsearch)
-- **Model Training** (`batch/model/model.py`): Train ML models (Linear Regression, Random Forest, GBT)
+- **Model Training** (`batch/model/model.py`): Train ML models (Linear Regression, Random Forest, GBT) - chạy manual
 
 **Cấu trúc lưu trữ dữ liệu:**
-- **Raw data**: `/user/hadoop/raw/` (không phân theo ngày)
+- **Raw data**: `/user/hadoop/raw/` 
+  - File timestamped từ consumer: `shopee_data_{timestamp}.json`
+  - File merged: `shopee_raw.ndjson`
 - **Clean data** (Airflow DAG): `/user/hadoop/clean/{ddmmyyyy}/` (theo ngày)
-- **Clean data** (Manual): `/user/hadoop/clean/` (trực tiếp)
+  - Format ngày: `ddmmyyyy` (ví dụ: `16012026` cho ngày 16/01/2026)
+  - Files: `shopee_full_data.csv`, `visualize_data.csv`, `model_data.csv`
+- **Clean data** (Manual): `/user/hadoop/clean/` (trực tiếp, không phân theo ngày)
 
 ---
 
@@ -178,13 +203,31 @@ Có 2 cách chạy: **Manual** (từng bước) hoặc **Airflow DAG** (tự đ�
 python3 batch/script/hdfs_consumer.py \
   --topic shopee_info \
   --tmp_file /tmp/shopee_local.tmp \
-  --dest /user/hadoop/raw/shopee_raw.ndjson \
-  --batch_size 1000
+  --dest /user/hadoop/raw \
+  --batch_size 1000 \
+  --bootstrap_servers localhost:9094 \
+  --timeout 180 \
+  --hdfs_host namenode \
+  --hdfs_port 9870
 ```
 
-**Lưu ý:** Script sẽ tự động tìm Hadoop container và ghi batch vào các file timestamped.
+**Lưu ý:** 
+- Script sẽ tạo nhiều file timestamped: `shopee_data_{timestamp}.json` trong `/user/hadoop/raw/`
+- Script tự động dừng sau 180 giây hoặc sau 30 giây không có message mới
+- Cần có `kafka-python` và `hdfs` packages: `pip install kafka-python hdfs`
 
-**3.2. Clean Shopee data**
+**3.2. Merge các file JSON thành một file ndjson**
+
+```bash
+docker exec namenode bash -c "
+  hdfs dfs -get /user/hadoop/raw/shopee_data_*.json /tmp/ 2>/dev/null || true
+  cat /tmp/shopee_data_*.json > /tmp/merged_shopee_raw.ndjson 2>/dev/null || touch /tmp/merged_shopee_raw.ndjson
+  hdfs dfs -put -f /tmp/merged_shopee_raw.ndjson /user/hadoop/raw/shopee_raw.ndjson
+  rm -f /tmp/shopee_data_*.json /tmp/merged_shopee_raw.ndjson
+"
+```
+
+**3.3. Clean Shopee data**
 
 ```bash
 docker exec spark-master /opt/spark/bin/spark-submit \
@@ -196,7 +239,7 @@ docker exec spark-master /opt/spark/bin/spark-submit \
   --destination hdfs://namenode:9000/user/hadoop/clean/shopee_full_data.csv
 ```
 
-**3.3. Tạo Model Data**
+**3.4. Tạo Model Data**
 
 ```bash
 docker exec spark-master /opt/spark/bin/spark-submit \
@@ -206,7 +249,9 @@ docker exec spark-master /opt/spark/bin/spark-submit \
   --destination hdfs://namenode:9000/user/hadoop/clean/model_data.csv
 ```
 
-**3.4. Tạo Visualize Data**
+**Lưu ý:** Script `model_data.py` chỉ xử lý Shopee data. Nếu muốn merge với Lazada, thêm `--lazada` argument.
+
+**3.5. Tạo Visualize Data**
 
 ```bash
 docker exec spark-master /opt/spark/bin/spark-submit \
@@ -218,7 +263,7 @@ docker exec spark-master /opt/spark/bin/spark-submit \
   --destination hdfs://namenode:9000/user/hadoop/clean/visualize_data.csv
 ```
 
-**3.5. Train Model**
+**3.6. Train Model (chạy manual, không có trong DAG)**
 
 ```bash
 python3 batch/model/model.py \
@@ -232,33 +277,78 @@ python3 batch/model/model.py \
 
 #### Cách 2: Chạy với Airflow DAG (tự động)
 
-**3.1. Copy scripts vào Spark container (nếu chưa mount)**
+**3.1. Đảm bảo Spark containers đang chạy**
+
+Trước khi trigger DAG, kiểm tra Spark containers:
+
+```bash
+# Kiểm tra trạng thái
+docker ps | grep spark
+
+# Nếu containers đã dừng, start lại
+docker start spark-master spark-worker-1
+
+# Đợi vài giây để Spark khởi động hoàn toàn
+sleep 5
+```
+
+**3.2. Copy scripts vào Spark container (nếu chưa mount)**
 
 Scripts đã được mount vào `/opt/spark-apps` trong `docker-compose-spark.yml`.
 
-**3.2. Trigger DAG**
+**3.3. Trigger DAG**
 
 - Truy cập Airflow UI: http://localhost:8082
-- Tìm DAG `data_processing_clean` hoặc `data_processing`
+- Username: `admin`, Password: `admin`
+- Tìm DAG `data_processing_clean`
 - Click "Play" để trigger
 
 **Hoặc dùng CLI:**
 
 ```bash
 # List DAGs
-airflow dags list
+docker exec airflow airflow dags list
 
 # Trigger DAG
-airflow dags trigger data_processing_clean
+docker exec airflow airflow dags trigger data_processing_clean
 
 # Xem logs
-airflow tasks logs data_processing_clean clean_shopee_data 2026-01-14
+docker exec airflow airflow tasks logs data_processing_clean clean_shopee_data 2026-01-16(year-month-day)
 ```
+
+**Cấu trúc DAG `data_processing_clean`:**
+
+DAG sẽ chạy các tasks theo thứ tự:
+
+1. **`consume_kafka_to_hdfs`**: 
+   - Consume từ Kafka topic `shopee_info` (bootstrap: `kafka_docker-kafka1-1:9095`)
+   - Tạo các file `shopee_data_{timestamp}.json` trong `/user/hadoop/raw/`
+   - Timeout: 180 giây (3 phút)
+   - Chạy trong Airflow container với user root
+
+2. **`merge_raw_files`**: 
+   - Merge tất cả `shopee_data_*.json` → `shopee_raw.ndjson`
+   - Chạy trong namenode container
+
+3. **`create_today_clean_folder`**: 
+   - Tạo thư mục `/user/hadoop/clean/{ddmmyyyy}/` (format: `ddmmyyyy`)
+
+4. **`grant_clean_access`**: 
+   - Set permission 777 cho thư mục ngày
+
+5. **`clean_shopee_data`**: 
+   - Clean và transform data từ `shopee_raw.ndjson`
+   - Ghi `shopee_full_data.csv` vào `/user/hadoop/clean/{ddmmyyyy}/`
+
+6. **`create_visualize_data`** và **`create_model_data`** (chạy song song):
+   - Visualize: Group và deduplicate → `visualize_data.csv`
+   - Model: Merge và prepare → `model_data.csv`
+   - Cả hai đều lưu vào `/user/hadoop/clean/{ddmmyyyy}/`
 
 **Cấu trúc dữ liệu khi chạy qua Airflow DAG:**
 
 DAG `data_processing_clean` sẽ tự động:
-1. Tạo thư mục theo ngày: `/user/hadoop/clean/{ddmmyyyy}/` (ví dụ: `/user/hadoop/clean/14012026/`)
+1. Tạo thư mục theo ngày: `/user/hadoop/clean/{ddmmyyyy}/` (ví dụ: `/user/hadoop/clean/16012026/`)
 2. Set permission 777 cho thư mục
 3. Lưu các file output vào thư mục ngày:
    - `shopee_full_data.csv` → `/user/hadoop/clean/{ddmmyyyy}/shopee_full_data.csv`
@@ -269,6 +359,7 @@ DAG `data_processing_clean` sẽ tự động:
 - Tổ chức dữ liệu theo ngày, dễ quản lý và truy vết
 - Tránh ghi đè dữ liệu giữa các ngày
 - Dễ dàng xóa dữ liệu cũ theo ngày nếu cần
+- Tự động hóa toàn bộ pipeline từ Kafka → HDFS → Clean → Model/Visualize
 
 ---
 
@@ -333,6 +424,31 @@ docker exec namenode hdfs dfs -get /user/hadoop/clean/14012026/shopee_full_data.
 - **Giải pháp:**
   ```bash
   docker exec namenode hdfs dfs -chmod -R 777 /user/hadoop
+  ```
+
+#### Lỗi: `container is not running` (khi chạy Spark jobs)
+- **Nguyên nhân:** Spark containers (`spark-master`, `spark-worker-1`) đã dừng
+- **Giải pháp:**
+  ```bash
+  # Kiểm tra trạng thái
+  docker ps -a | grep spark
+  
+  # Start lại containers
+  docker start spark-master spark-worker-1
+  
+  # Đợi vài giây để Spark khởi động
+  sleep 5
+  
+  # Kiểm tra lại
+  docker ps | grep spark
+  ```
+- **Phòng tránh:** Có thể thêm `restart: always` vào docker-compose-spark.yml
+
+#### Lỗi: `ModuleNotFoundError: No module named 'kafka'` (khi chạy hdfs_consumer)
+- **Nguyên nhân:** Thiếu packages `kafka-python` hoặc `hdfs` trong Airflow container
+- **Giải pháp:** Packages đã được cài trong `docker-compose-airflow.yml`. Nếu vẫn lỗi:
+  ```bash
+  docker exec -u root airflow pip install kafka-python hdfs
   ```
 
 #### Xem logs của containers

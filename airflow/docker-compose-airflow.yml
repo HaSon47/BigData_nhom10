@@ -3,12 +3,11 @@ services:
   airflow:
     image: apache/airflow:2.10.2
     container_name: airflow
-    user: root
+    user: "0:0"  # Chạy với root để có quyền Docker
     restart: always
     environment:
       - AIRFLOW__CORE__EXECUTOR=LocalExecutor
-      # FIX 1: Đổi host từ 'postgres' thành 'airflow-postgres' cho chính xác với container_name
-      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow-postgres/airflow
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@postgres/airflow
       - AIRFLOW__CORE__FERNET_KEY=FB0o_zt4e3Zkkge3YzTYFz8ON5G6KFzpR1k9l53Pr8c=
       - AIRFLOW__CORE__LOAD_EXAMPLES=False
       - AIRFLOW__WEBSERVER__RBAC=True
@@ -19,19 +18,30 @@ services:
       - ./plugins:/opt/airflow/plugins
       - /var/run/docker.sock:/var/run/docker.sock
       - /usr/bin/docker:/usr/bin/docker
+      - /home/annez02/BigData_nhom10:/home/annez02/BigData_nhom10:ro
     ports:
       - "8082:8080"
     depends_on:
       postgres:
-        condition: service_healthy # FIX 2: Chỉ chạy khi Postgres đã sẵn sàng (Healthy)
+        condition: service_healthy 
     networks:
       - bigdata_net
     command: >
       bash -c "
+      echo 'Setting up Docker permissions...' &&
+      chmod 666 /var/run/docker.sock || true &&
+      echo 'Installing Python packages...' &&
+      python3 -m pip install --break-system-packages hdfs kafka-python || pip install hdfs kafka-python &&
+      echo 'Installing packages for airflow user...' &&
+      su -s /bin/bash airflow -c 'pip install --user hdfs kafka-python' || true &&
       echo 'Waiting for Postgres...' &&
-      airflow db migrate &&
-      airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com || true &&
-      (airflow scheduler & airflow webserver)"
+      sleep 10 &&
+      echo 'Initializing database...' &&
+      su -s /bin/bash airflow -c 'airflow db init' || su -s /bin/bash airflow -c 'airflow db upgrade' &&
+      echo 'Creating admin user...' &&
+      su -s /bin/bash airflow -c 'airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com' || true &&
+      echo 'Starting Airflow services...' &&
+      su -s /bin/bash airflow -c 'airflow scheduler & airflow webserver'"
 
   postgres:
     image: postgres:13

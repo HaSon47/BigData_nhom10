@@ -1,218 +1,152 @@
-import logging
-import subprocess
+#!/usr/bin/env python3
+"""
+Kafka Consumer script để consume messages từ Kafka và ghi vào HDFS.
+Script này sẽ tự động dừng sau 3 phút (180 giây) để đảm bảo DAG có thể tiếp tục.
+"""
+
 import argparse
+import json
+import os
 import time
+from datetime import datetime
 from kafka import KafkaConsumer
+from kafka.errors import KafkaError
+from hdfs import InsecureClient
 
-BOOTSTRAP_SERVERS = ['localhost:9094']
-logging.basicConfig(level=logging.INFO)
+# Default timeout: 3 phút (180 giây)
+DEFAULT_TIMEOUT = 180
 
-parser = argparse.ArgumentParser(description='Kafka consumer with HDFS sink')
-parser.add_argument('--topic', type=str, help='Kafka topic')
-parser.add_argument('--tmp_file', type=str, help='Local temp file path')
-parser.add_argument('--dest', type=str, help='Hdfs destination path')
-parser.add_argument('--batch_size', type=int, default=1000, help='Number of messages to batch before writing')
-
-args = parser.parse_args()
-
-# Buffer để batch messages
-message_buffer = []
-
-def check_hdfs_command():
-    """Check if hdfs command is available"""
+def upload_to_hdfs(hdfs_client, local_file, hdfs_path):
+    """Upload file từ local lên HDFS"""
     try:
-        subprocess.run(['hdfs', 'dfs', '-ls', '/'], 
-                      capture_output=True, check=True, timeout=5)
-        return 'local'
-    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        return None
-
-def find_hadoop_container():
-    """Tự động tìm Hadoop namenode container"""
-    logging.info("Searching for Hadoop namenode container...")
-    
-    try:
-        result = subprocess.run(
-            ['docker', 'ps', '--format', '{{.Names}}'],
-            capture_output=True, text=True, check=True
-        )
-        containers = result.stdout.strip().split('\n')
-        
-        for container in containers:
-            if 'namenode' in container.lower():
-                logging.info(f"Found namenode container: {container}")
-                return container
-    except Exception as e:
-        logging.warning(f"Error searching containers: {e}")
-    
-    common_names = ['namenode', 'hadoop_docker-namenode-1', 'hadoop-namenode']
-    for name in common_names:
-        try:
-            result = subprocess.run(
-                ['docker', 'exec', name, 'hdfs', 'dfs', '-ls', '/'],
-                capture_output=True, text=True, check=True, timeout=5
-            )
-            logging.info(f"Successfully found container: {name}")
-            return name
-        except:
-            continue
-    
-    logging.error("Could not find any namenode container")
-    return None
-
-def check_docker_hdfs(container_name):
-    """Check if HDFS is running in Docker"""
-    try:
-        result = subprocess.run(
-            ['docker', 'exec', container_name, 'hdfs', 'dfs', '-ls', '/'],
-            capture_output=True, text=True, check=True, timeout=5
-        )
+        hdfs_client.upload(hdfs_path, local_file, overwrite=False)
+        print(f"Uploaded {local_file} to {hdfs_path}")
         return True
-    except:
+    except Exception as e:
+        print(f"Error uploading to HDFS: {e}")
         return False
 
-def write_batch_to_hdfs(messages, container_name, max_retries=3):
-    """Ghi batch messages vào HDFS bằng cách TẠO FILE MỚI (Put)"""
+def main():
+    parser = argparse.ArgumentParser(description='Consume Kafka messages and write to HDFS')
+    parser.add_argument('--topic', type=str, required=True, help='Kafka topic name')
+    parser.add_argument('--tmp_file', type=str, required=True, help='Local temporary file path')
+    parser.add_argument('--dest', type=str, required=True, help='HDFS destination directory')
+    parser.add_argument('--batch_size', type=int, default=1000, help='Batch size before uploading to HDFS')
+    parser.add_argument('--bootstrap_servers', type=str, default='localhost:9094', help='Kafka bootstrap servers')
+    parser.add_argument('--timeout', type=int, default=DEFAULT_TIMEOUT, help=f'Timeout in seconds (default: {DEFAULT_TIMEOUT})')
+    parser.add_argument('--hdfs_host', type=str, default='namenode', help='HDFS namenode host')
+    parser.add_argument('--hdfs_port', type=int, default=9870, help='HDFS namenode port')
     
-    # Tạo tên file tạm ở local
-    batch_file = f"{args.tmp_file}_batch"
-    with open(batch_file, 'w', encoding='utf-8') as f:
-        for msg in messages:
-            f.write(msg + '\n')
+    args = parser.parse_args()
     
-    # TẠO TÊN FILE ĐÍCH TRÊN HDFS (Dựa theo thời gian để không trùng)
-    timestamp = int(time.time())
-    # Lưu ý: args.dest lúc này phải là đường dẫn THƯ MỤC
-    hdfs_dest_path = f"{args.dest.rstrip('/')}/shopee_data_{timestamp}.json"
-
-    logging.info(f"Uploading batch to new file: {hdfs_dest_path}")
-
-    # Copy file vào container (bước trung gian)
-    tmp_container_path = f"/tmp/batch_{timestamp}.tmp"
-    subprocess.run(['docker', 'cp', batch_file, f'{container_name}:{tmp_container_path}'], check=False)
-
-    # Dùng lệnh PUT thay vì appendToFile
-    for attempt in range(max_retries):
-        try:
-            result = subprocess.run([
-                'docker', 'exec', container_name,
-                'hdfs', 'dfs', '-put', tmp_container_path, hdfs_dest_path
-            ], capture_output=True, text=True, timeout=15)
-            
-            if result.returncode == 0:
-                logging.info(f"Success: Wrote {len(messages)} msgs to {hdfs_dest_path}")
-                
-                # Dọn dẹp file tạm trong container cho sạch
-                subprocess.run(['docker', 'exec', container_name, 'rm', tmp_container_path], check=False)
-                
-                # Dọn dẹp file tạm ở local
-                try:
-                    import os
-                    if os.path.exists(batch_file):
-                        os.remove(batch_file)
-                        logging.info(f"Cleaned up local temp file: {batch_file}")
-                except Exception as e:
-                    logging.warning(f"Failed to remove local temp file: {e}")
-                
-                return True
-            else:
-                logging.warning(f"Attempt {attempt+1} failed: {result.stderr}")
-                time.sleep(2)
-        except Exception as e:
-            logging.error(f"Error: {e}")
-            time.sleep(2)
-
-    return False
-
-def flush_buffer(container_name):
-    """Ghi tất cả messages trong buffer vào HDFS"""
-    if not message_buffer:
-        return
+    # Tạo thư mục cho tmp_file nếu chưa có
+    os.makedirs(os.path.dirname(args.tmp_file), exist_ok=True)
     
-    if write_batch_to_hdfs(message_buffer, container_name):
-        message_buffer.clear()
-    else:
-        logging.error(f"Failed to write batch, keeping {len(message_buffer)} messages in buffer")
-
-def write_to_hdfs(msg, container_name=None):
-    """Thêm message vào buffer hoặc ghi ngay nếu buffer đầy"""
-    global message_buffer
+    # Kết nối HDFS
+    hdfs_url = f'http://{args.hdfs_host}:{args.hdfs_port}'
+    hdfs_client = InsecureClient(hdfs_url, user='hadoop')
     
-    # Thêm vào buffer
-    message_buffer.append(msg)
-    
-    # Nếu buffer đầy hoặc chưa có container, tìm container
-    if container_name is None:
-        container_name = find_hadoop_container()
-        if not container_name or not check_docker_hdfs(container_name):
-            logging.warning("Cannot find HDFS container. Writing to local file only.")
-            write_to_local(msg)
-            return
-    
-    # Nếu buffer đầy, flush ngay
-    if len(message_buffer) >= args.batch_size:
-        flush_buffer(container_name)
-    
-    return container_name
-
-def write_to_local(msg):
-    with open(args.tmp_file, "w", encoding='utf-8') as f:
-        f.write(msg + '\n')
-
-if __name__ == '__main__':
+    # Tạo Kafka consumer
+    print(f"Connecting to Kafka at {args.bootstrap_servers}")
     consumer = KafkaConsumer(
-        bootstrap_servers=BOOTSTRAP_SERVERS,
-        value_deserializer=lambda v: v.decode('utf-8'),
-        group_id=args.topic
+        args.topic,
+        bootstrap_servers=args.bootstrap_servers.split(','),
+        value_deserializer=lambda m: json.loads(m.decode('utf-8')),
+        auto_offset_reset='earliest',
+        enable_auto_commit=True,
+        consumer_timeout_ms=1000  # 1 giây timeout cho mỗi poll
     )
-    logging.info("Consumer created")
-
-    consumer.subscribe([args.topic])
-    logging.info(f"Subscribed to topic: {args.topic}")
     
-    container_name = None
+    print(f"Consumer started. Timeout: {args.timeout} seconds")
+    
+    batch = []
+    batch_count = 0
+    start_time = time.time()
+    last_message_time = start_time
     terminate_count = 0
-    last_flush_time = time.time()
-    flush_interval = 30  # Flush buffer mỗi 30 giây nếu chưa đầy
     
-    while True:
-        logging.info("Polling for messages")
-        d = consumer.poll(timeout_ms=1000, max_records=1)
-        logging.info("Polling completed")
-        
-        if d:
-            terminate_count = 0
-            logging.info("Message found")
-            records = list(d.values())[0]
-            logging.info("Number of messages: {}".format(len(records)))
-
-            for record in records:
-                logging.info(f"partition: {record.partition}, offset: {record.offset}")
-                container_name = write_to_hdfs(record.value, container_name)
-            
-            # Flush buffer nếu đã quá thời gian
-            if time.time() - last_flush_time > flush_interval:
-                if message_buffer:
-                    logging.info(f"Flushing buffer after {flush_interval}s interval")
-                    flush_buffer(container_name)
-                    last_flush_time = time.time()
-        else:
-            logging.info("No message found")
-            terminate_count += 1
-            
-            # Flush buffer trước khi terminate
-            if terminate_count >= 900:
-                if message_buffer:
-                    logging.info("Flushing remaining messages before exit")
-                    flush_buffer(container_name)
+    try:
+        while True:
+            # Kiểm tra timeout tuyệt đối (3 phút)
+            elapsed_time = time.time() - start_time
+            if elapsed_time >= args.timeout:
+                print(f"Timeout reached ({args.timeout} seconds). Stopping consumer.")
                 break
             
-            # Flush buffer định kỳ ngay cả khi không có message mới
-            if time.time() - last_flush_time > flush_interval:
-                if message_buffer:
-                    logging.info(f"Flushing buffer after {flush_interval}s interval")
-                    flush_buffer(container_name)
-                    last_flush_time = time.time()
+            # Poll messages từ Kafka
+            message_pack = consumer.poll(timeout_ms=1000)
+            
+            if message_pack:
+                # Có messages
+                terminate_count = 0
+                last_message_time = time.time()
+                
+                for topic_partition, messages in message_pack.items():
+                    for message in messages:
+                        batch.append(message.value)
+                        
+                        # Khi đủ batch_size, upload lên HDFS
+                        if len(batch) >= args.batch_size:
+                            timestamp = int(time.time())
+                            batch_file = f"{args.tmp_file}.{timestamp}.json"
+                            
+                            # Ghi batch vào file local
+                            with open(batch_file, 'w') as f:
+                                for item in batch:
+                                    f.write(json.dumps(item) + '\n')
+                            
+                            # Upload lên HDFS với tên file có timestamp
+                            hdfs_filename = f"shopee_data_{timestamp}.json"
+                            hdfs_path = f"{args.dest}/{hdfs_filename}"
+                            
+                            if upload_to_hdfs(hdfs_client, batch_file, hdfs_path):
+                                # Xóa file local sau khi upload thành công
+                                try:
+                                    os.remove(batch_file)
+                                except:
+                                    pass
+                            
+                            batch_count += 1
+                            batch = []
+                            print(f"Uploaded batch {batch_count} to HDFS")
+            else:
+                # Không có message mới
+                terminate_count += 1
+                
+                # Nếu không có message trong 30 giây, dừng lại
+                if time.time() - last_message_time > 30:
+                    print("No messages for 30 seconds. Stopping consumer.")
+                    break
+        
+        # Upload batch còn lại nếu có
+        if batch:
+            timestamp = int(time.time())
+            batch_file = f"{args.tmp_file}.{timestamp}.json"
+            
+            with open(batch_file, 'w') as f:
+                for item in batch:
+                    f.write(json.dumps(item) + '\n')
+            
+            hdfs_filename = f"shopee_data_{timestamp}.json"
+            hdfs_path = f"{args.dest}/{hdfs_filename}"
+            
+            if upload_to_hdfs(hdfs_client, batch_file, hdfs_path):
+                try:
+                    os.remove(batch_file)
+                except:
+                    pass
+            print(f"Uploaded final batch to HDFS")
     
-    consumer.close()
-    logging.info("Consumer closed")
+    except KeyboardInterrupt:
+        print("Interrupted by user")
+    except Exception as e:
+        print(f"Error: {e}")
+        raise
+    finally:
+        consumer.close()
+        print(f"Consumer closed. Total batches uploaded: {batch_count}")
+
+if __name__ == '__main__':
+    main()
+
+
